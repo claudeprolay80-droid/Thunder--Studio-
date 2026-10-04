@@ -359,6 +359,8 @@ router.post('/render-video', async (req: Request, res: Response) => {
       subtitles,
       blurBox,
       subtitleStyle,
+      videoTransform,
+      audioSettings,
       videoDuration,
       jobId
     } = req.body;
@@ -370,6 +372,31 @@ router.post('/render-video', async (req: Request, res: Response) => {
     const videoPath = path.join(VIDEOS_DIR, videoFilename);
     if (!fs.existsSync(videoPath)) {
       return res.status(404).json({ error: 'Video file not found' });
+    }
+
+    // Validate crop settings if enabled
+    if (videoTransform?.crop?.enabled) {
+      const c = videoTransform.crop;
+      if (
+        typeof c.xPercent !== 'number' ||
+        typeof c.yPercent !== 'number' ||
+        typeof c.widthPercent !== 'number' ||
+        typeof c.heightPercent !== 'number' ||
+        c.widthPercent <= 5 ||
+        c.heightPercent <= 5
+      ) {
+        return res.status(400).json({ error: 'Invalid crop dimensions. Width and height must be at least 5%.' });
+      }
+    }
+
+    // Validate audio settings if provided
+    if (audioSettings) {
+      if (
+        (typeof audioSettings.originalVolume === 'number' && (audioSettings.originalVolume < 0 || audioSettings.originalVolume > 2.5)) ||
+        (typeof audioSettings.voiceVolume === 'number' && (audioSettings.voiceVolume < 0 || audioSettings.voiceVolume > 2.5))
+      ) {
+        return res.status(400).json({ error: 'Audio volume levels must be between 0% and 250%.' });
+      }
     }
 
     // Map audio segments that have generated audio
@@ -393,7 +420,7 @@ router.post('/render-video', async (req: Request, res: Response) => {
     const outputPath = path.join(RENDERED_DIR, outputFilename);
 
     if (jobId) {
-      jobProgress[jobId] = { percent: 5, status: 'Initializing final video rendering...' };
+      jobProgress[jobId] = { percent: 5, status: 'Initializing video transformations and audio mix...' };
     }
 
     await VideoService.renderFinalVideo({
@@ -401,14 +428,27 @@ router.post('/render-video', async (req: Request, res: Response) => {
       audioSegments: audioSegmentsList,
       subtitles: subtitles || [],
       blurBox: blurBox || { enabled: false, xPercent: 10, yPercent: 80, widthPercent: 80, heightPercent: 15, strength: 20 },
-      subtitleStyle: subtitleStyle || { fontSize: 28, textColor: '#FFFFFF', bgColor: '#000000', bgOpacity: 0.7, bottomMarginPercent: 8, fontFamily: 'Noto Sans Myanmar' },
+      subtitleStyle: subtitleStyle || {
+        fontSize: 36,
+        textColor: '#FFFFFF',
+        bgColor: '#000000',
+        bgOpacity: 0.75,
+        horizontalAlign: 'center',
+        verticalPosition: 'bottom',
+        yOffsetPercent: 8,
+        outline: true,
+        shadow: true,
+        fontFamily: 'Noto Sans Myanmar'
+      },
+      videoTransform,
+      audioSettings,
       outputPath,
       videoDuration: videoDuration || 10,
       onProgress: (pct) => {
         if (jobId) {
           jobProgress[jobId] = {
             percent: pct,
-            status: `Rendering final video with blur box, Burmese subtitles, and narration: ${pct}%`
+            status: `Rendering with crop, mirror, blur mask, Burmese subtitles, and audio mix: ${pct}%`
           };
         }
       }

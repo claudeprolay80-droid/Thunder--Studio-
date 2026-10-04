@@ -1,7 +1,15 @@
 import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { VideoMetadata, BlurBoxConfig, SubtitleStyleConfig, RecapSegment, SubtitleChunk } from '../../src/types/index.ts';
+import {
+  VideoMetadata,
+  BlurBoxConfig,
+  SubtitleStyleConfig,
+  RecapSegment,
+  SubtitleChunk,
+  VideoTransformConfig,
+  AudioSettings
+} from '../../src/types/index.ts';
 
 export class VideoService {
   /**
@@ -108,7 +116,6 @@ export class VideoService {
 
       ffmpeg.stderr.on('data', (d) => {
         stderr += d.toString();
-        // Simple progress parsing if duration is present
         if (onProgress && stderr.includes('time=')) {
           onProgress(50);
         }
@@ -130,15 +137,6 @@ export class VideoService {
   static async createSampleDemoVideo(outputPath: string): Promise<string> {
     return new Promise((resolve, reject) => {
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-
-      // Generate a 12-second dramatic demo video clip with colored visual scenes and spoken dialogue tone
-      const filter = `
-        testsrc=duration=12:size=1280x720:rate=24 [bg];
-        drawbox=y=600:w=1280:h=90:color=black@0.7:t=fill [box];
-        drawtext=text='Original Subtitle\\: John enters the room and investigates':fontcolor=white:fontsize=28:x=(w-text_w)/2:y=630 [sub];
-        [bg][box] overlay [b1];
-        [b1][sub] overlay [v]
-      `.replace(/\s+/g, ' ').trim();
 
       const args = [
         '-y',
@@ -178,7 +176,8 @@ export class VideoService {
   }
 
   /**
-   * Generate an Advanced SubStation Alpha (.ass) subtitle file with Burmese font
+   * Generate an Advanced SubStation Alpha (.ass) subtitle file with Burmese font,
+   * customizable alignment, vertical position presets, font size, safe margins, outline and shadow.
    */
   static generateAssSubtitleFile(
     subtitles: SubtitleChunk[],
@@ -189,20 +188,67 @@ export class VideoService {
   ): void {
     // Convert hex color #RRGGBB to ASS &H00BBGGRR
     const hexToAssColor = (hex: string, alphaPercent: number = 0): string => {
-      const clean = hex.replace('#', '');
-      const r = clean.substring(0, 2);
-      const g = clean.substring(2, 4);
-      const b = clean.substring(4, 6);
+      const clean = (hex || '#FFFFFF').replace('#', '');
+      const r = clean.substring(0, 2) || 'FF';
+      const g = clean.substring(2, 4) || 'FF';
+      const b = clean.substring(4, 6) || 'FF';
       const alphaVal = Math.min(255, Math.max(0, Math.round((1 - alphaPercent) * 255)));
       const alphaHex = alphaVal.toString(16).padStart(2, '0').toUpperCase();
       return `&H${alphaHex}${b}${g}${r}`;
     };
 
-    const primaryColor = hexToAssColor(style.textColor, 1); // 100% visible
-    const backColor = hexToAssColor(style.bgColor, style.bgOpacity);
+    const primaryColor = hexToAssColor(style.textColor || '#FFFFFF', 1);
+    const backColor = hexToAssColor(style.bgColor || '#000000', style.bgOpacity ?? 0.75);
     const outlineColor = '&H00000000'; // black outline
 
-    const marginV = Math.round((style.bottomMarginPercent / 100) * height) || 40;
+    // Calculate ASS Alignment
+    // Horizontal: left = 1, center = 2, right = 3
+    let hOffset = 2;
+    if (style.horizontalAlign === 'left') hOffset = 1;
+    else if (style.horizontalAlign === 'right') hOffset = 3;
+
+    // Vertical: bottom = 0, center = 3, top = 6
+    let vOffset = 0;
+    const vPos = style.verticalPosition || 'bottom';
+    if (vPos === 'top' || vPos === 'upper') {
+      vOffset = 6;
+    } else if (vPos === 'center') {
+      vOffset = 3;
+    } else {
+      vOffset = 0; // bottom or lower
+    }
+
+    const alignment = hOffset + vOffset;
+
+    // Safe Area Margins
+    let marginL = 20;
+    let marginR = 20;
+    if (style.horizontalAlign === 'left') {
+      marginL = Math.max(40, Math.round(width * 0.05));
+    } else if (style.horizontalAlign === 'right') {
+      marginR = Math.max(40, Math.round(width * 0.05));
+    }
+
+    // Vertical Margin
+    const yOffset = typeof style.yOffsetPercent === 'number'
+      ? style.yOffsetPercent
+      : (style.bottomMarginPercent || 8);
+
+    let marginV = Math.round((yOffset / 100) * height);
+    if (vPos === 'lower' && yOffset < 15) {
+      marginV = Math.round(0.18 * height);
+    } else if (vPos === 'upper' && yOffset < 15) {
+      marginV = Math.round(0.18 * height);
+    } else if (vPos === 'center') {
+      marginV = 0;
+    }
+
+    // Keep subtitle strictly within safe area
+    marginV = Math.max(15, Math.min(Math.round(height * 0.45), marginV));
+
+    const outlineWidth = style.outline !== false ? 3 : 0;
+    const shadowDepth = style.shadow !== false ? 2 : 0;
+    const fontSize = Math.min(120, Math.max(12, style.fontSize || 36));
 
     let assContent = `[Script Info]
 Title: Thunder Studio Burmese Recap
@@ -215,7 +261,7 @@ PlayResY: ${height}
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: RecapDefault,Noto Sans Myanmar,${style.fontSize},${primaryColor},&H000000FF,${outlineColor},${backColor},-1,0,0,0,100,100,0,0,1,2,1,2,20,20,${marginV},1
+Style: RecapDefault,Noto Sans Myanmar SemiBold,${fontSize},${primaryColor},&H000000FF,${outlineColor},${backColor},0,0,0,0,100,100,0,0,1,${outlineWidth},${shadowDepth},${alignment},${marginL},${marginR},${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -237,9 +283,11 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 
   /**
    * Render final video with:
-   * 1. Subtitle Blur box (boxblur)
-   * 2. Burmese Recap Subtitle burn-in (via libass)
-   * 3. Audio mix: Original audio ducked + Burmese narration audio segments at respective timestamps
+   * 1. Video Transform: Crop -> Mirror
+   * 2. Subtitle Blur box (boxblur)
+   * 3. Audio Mixing: Original video audio (0% - 200% / mute) + Burmese narration (0% - 200%)
+   * 4. Burmese Recap Subtitle burn-in (via libass)
+   * 5. Encoding
    */
   static async renderFinalVideo({
     videoPath,
@@ -247,6 +295,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     subtitles,
     blurBox,
     subtitleStyle,
+    videoTransform,
+    audioSettings,
     outputPath,
     videoDuration,
     onProgress
@@ -256,6 +306,8 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     subtitles: SubtitleChunk[];
     blurBox: BlurBoxConfig;
     subtitleStyle: SubtitleStyleConfig;
+    videoTransform?: VideoTransformConfig;
+    audioSettings?: AudioSettings;
     outputPath: string;
     videoDuration: number;
     onProgress?: (progress: number) => void;
@@ -264,104 +316,158 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     fs.mkdirSync(tempDir, { recursive: true });
 
     try {
-      // 1. Get video dimensions
+      // 1. Get original video dimensions
       const meta = await this.getVideoMetadata(videoPath, 'video.mp4', '');
-      const width = meta.width;
-      const height = meta.height;
+      const origW = meta.width;
+      const origH = meta.height;
 
-      // 2. Generate ASS subtitle file
-      const assPath = path.join(tempDir, 'subtitles.ass');
-      this.generateAssSubtitleFile(subtitles, subtitleStyle, width, height, assPath);
+      // 2. Compute Crop dimensions (if enabled)
+      let targetW = origW;
+      let targetH = origH;
+      let isCropActive = false;
+      let cropFilter = '';
 
-      // 3. Build video filter chain:
-      // If blur enabled, calculate pixel coordinates
-      let vfParts: string[] = [];
-      let inputVTag = '0:v';
+      if (videoTransform?.crop?.enabled) {
+        const c = videoTransform.crop;
+        let cW = Math.round((c.widthPercent / 100) * origW);
+        let cH = Math.round((c.heightPercent / 100) * origH);
+        let cX = Math.round((c.xPercent / 100) * origW);
+        let cY = Math.round((c.yPercent / 100) * origH);
 
-      if (blurBox.enabled && blurBox.strength > 0) {
-        let cropW = Math.round((blurBox.widthPercent / 100) * width);
-        let cropH = Math.round((blurBox.heightPercent / 100) * height);
-        let cropX = Math.round((blurBox.xPercent / 100) * width);
-        let cropY = Math.round((blurBox.yPercent / 100) * height);
+        // Ensure even values for H.264 YUV420p
+        if (cW % 2 !== 0) cW -= 1;
+        if (cH % 2 !== 0) cH -= 1;
+        if (cX % 2 !== 0) cX -= 1;
+        if (cY % 2 !== 0) cY -= 1;
 
-        // Ensure even dimensions for YUV420p
-        if (cropW % 2 !== 0) cropW -= 1;
-        if (cropH % 2 !== 0) cropH -= 1;
-        if (cropX % 2 !== 0) cropX -= 1;
-        if (cropY % 2 !== 0) cropY -= 1;
+        cW = Math.max(32, Math.min(origW - cX, cW));
+        cH = Math.max(32, Math.min(origH - cY, cH));
+        cX = Math.max(0, Math.min(origW - cW, cX));
+        cY = Math.max(0, Math.min(origH - cH, cY));
 
-        cropW = Math.max(16, Math.min(width - cropX, cropW));
-        cropH = Math.max(16, Math.min(height - cropY, cropH));
-        cropX = Math.max(0, Math.min(width - cropW, cropX));
-        cropY = Math.max(0, Math.min(height - cropH, cropY));
-
-        const lumaRadius = Math.min(50, Math.max(4, Math.round(blurBox.strength / 2)));
-        // split -> crop -> boxblur -> overlay
-        vfParts.push(
-          `[0:v]split[vbase][vcrop];` +
-          `[vcrop]crop=${cropW}:${cropH}:${cropX}:${cropY},boxblur=luma_radius=${lumaRadius}:luma_power=2[vblur];` +
-          `[vbase][vblur]overlay=${cropX}:${cropY}[vblended];` +
-          `[vblended]ass='${assPath.replace(/'/g, "\\'")}'[vout]`
-        );
-      } else {
-        vfParts.push(`[0:v]ass='${assPath.replace(/'/g, "\\'")}'[vout]`);
+        if (cW < origW || cH < origH || cX > 0 || cY > 0) {
+          isCropActive = true;
+          targetW = cW;
+          targetH = cH;
+          cropFilter = `crop=${cW}:${cH}:${cX}:${cY}`;
+        }
       }
 
-      // 4. Build audio filter graph
-      // Input 0 is original video.
-      // Next inputs are audio segments: [1], [2], [3], etc.
-      const ffmpegArgs: string[] = ['-y', '-i', videoPath];
+      // 3. Generate ASS subtitle file sized to target dimensions
+      const assPath = path.join(tempDir, 'subtitles.ass');
+      this.generateAssSubtitleFile(subtitles, subtitleStyle, targetW, targetH, assPath);
 
-      const validSegments = audioSegments.filter(s => fs.existsSync(s.filePath));
+      // 4. Build Video Filter Graph:
+      // Order: 1. Input -> 2. Crop -> 3. Mirror -> 4. Blur Box -> 5. Subtitles
+      let vfNodes: string[] = [];
+      let currentTag = '0:v';
+
+      // Step A: Crop
+      if (isCropActive) {
+        vfNodes.push(`[${currentTag}]${cropFilter}[v_crop]`);
+        currentTag = 'v_crop';
+      }
+
+      // Step B: Mirror (Horizontal Flip)
+      if (videoTransform?.mirror) {
+        vfNodes.push(`[${currentTag}]hflip[v_mirror]`);
+        currentTag = 'v_mirror';
+      }
+
+      // Step C: Subtitle Blur Box (applied to the current cropped/mirrored video coordinates)
+      if (blurBox.enabled && blurBox.strength > 0) {
+        let bW = Math.round((blurBox.widthPercent / 100) * targetW);
+        let bH = Math.round((blurBox.heightPercent / 100) * targetH);
+        let bX = Math.round((blurBox.xPercent / 100) * targetW);
+        let bY = Math.round((blurBox.yPercent / 100) * targetH);
+
+        if (bW % 2 !== 0) bW -= 1;
+        if (bH % 2 !== 0) bH -= 1;
+        if (bX % 2 !== 0) bX -= 1;
+        if (bY % 2 !== 0) bY -= 1;
+
+        bW = Math.max(16, Math.min(targetW - bX, bW));
+        bH = Math.max(16, Math.min(targetH - bY, bH));
+        bX = Math.max(0, Math.min(targetW - bW, bX));
+        bY = Math.max(0, Math.min(targetH - bH, bY));
+
+        const lumaRadius = Math.min(50, Math.max(4, Math.round(blurBox.strength / 2)));
+        vfNodes.push(
+          `[${currentTag}]split[v_base][v_box];` +
+          `[v_box]crop=${bW}:${bH}:${bX}:${bY},boxblur=luma_radius=${lumaRadius}:luma_power=2[v_blurred];` +
+          `[v_base][v_blurred]overlay=${bX}:${bY}[v_masked]`
+        );
+        currentTag = 'v_masked';
+      }
+
+      // Step D: Burn-in Burmese Subtitles
+      vfNodes.push(`[${currentTag}]ass='${assPath.replace(/'/g, "\\'")}'[vout]`);
+
+      // 5. Build Audio Filter Graph (Sections 1, 2, 3: Original Audio Volume + Burmese Voice Volume + Muting)
+      const origVol = audioSettings?.originalMuted ? 0 : (audioSettings?.originalVolume ?? 1.0);
+      const voiceVol = audioSettings?.voiceVolume ?? 1.0;
+
+      const ffmpegArgs: string[] = ['-y', '-i', videoPath];
+      const validSegments = audioSegments.filter((s) => fs.existsSync(s.filePath));
 
       for (const seg of validSegments) {
         ffmpegArgs.push('-i', seg.filePath);
       }
 
-      let filterComplex = '';
+      let afNodes: string[] = [];
 
       if (validSegments.length > 0) {
         let delayedAudioTags: string[] = [];
 
-        // For each narration segment, delay by start time in milliseconds
         validSegments.forEach((seg, idx) => {
           const inputIdx = idx + 1;
           const delayMs = Math.max(0, Math.round(seg.start * 1000));
           const tag = `a_seg_${idx}`;
-          filterComplex += `[${inputIdx}:a]adelay=${delayMs}|${delayMs}[${tag}];`;
+          afNodes.push(`[${inputIdx}:a]adelay=${delayMs}|${delayMs}[${tag}]`);
           delayedAudioTags.push(`[${tag}]`);
         });
 
         // Combine all narration segments into one narration audio track
         if (delayedAudioTags.length > 1) {
-          filterComplex += `${delayedAudioTags.join('')}amix=inputs=${delayedAudioTags.length}:dropout_transition=0:normalize=0[narration_all];`;
+          afNodes.push(
+            `${delayedAudioTags.join('')}amix=inputs=${delayedAudioTags.length}:dropout_transition=0:normalize=0[narration_mix]`
+          );
         } else {
-          filterComplex += `${delayedAudioTags[0]}aformat=sample_rates=44100:channel_layouts=stereo[narration_all];`;
+          afNodes.push(
+            `${delayedAudioTags[0]}aformat=sample_rates=44100:channel_layouts=stereo[narration_mix]`
+          );
         }
 
-        // Mix ducked original audio (15%) + narration (100%)
-        if (meta.hasAudio) {
-          filterComplex += `[0:a]volume=0.15[bg_audio];[bg_audio][narration_all]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`;
+        // Apply voice volume
+        afNodes.push(`[narration_mix]volume=${voiceVol.toFixed(2)}[narration_vol]`);
+
+        // Mix with Original Movie Audio (using origVol)
+        if (meta.hasAudio && origVol > 0) {
+          afNodes.push(`[0:a]volume=${origVol.toFixed(2)}[bg_audio]`);
+          afNodes.push(
+            `[bg_audio][narration_vol]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[aout]`
+          );
         } else {
-          filterComplex += `[narration_all]volume=1.0[aout]`;
+          // Original is muted or 0% volume: only narration
+          afNodes.push(`[narration_vol]aformat=sample_rates=44100:channel_layouts=stereo[aout]`);
         }
       } else {
-        // No narration audio segments, keep original audio
-        if (meta.hasAudio) {
-          filterComplex += `[0:a]volume=1.0[aout]`;
+        // No narration segments
+        if (meta.hasAudio && origVol > 0) {
+          afNodes.push(`[0:a]volume=${origVol.toFixed(2)}[aout]`);
+        } else {
+          // Muted or no audio
+          afNodes.push(`anullsrc=r=44100:cl=stereo,atrim=duration=${videoDuration || 10}[aout]`);
         }
       }
 
-      // Combine video filter and audio filter
-      const fullFilterComplex = vfParts.join(';') + (filterComplex ? ';' + filterComplex : '');
+      // Combine video and audio filters
+      const fullFilterComplex = vfNodes.join(';') + ';' + afNodes.join(';');
 
       ffmpegArgs.push('-filter_complex', fullFilterComplex);
       ffmpegArgs.push('-map', '[vout]');
-
-      if (validSegments.length > 0 || meta.hasAudio) {
-        ffmpegArgs.push('-map', '[aout]');
-        ffmpegArgs.push('-c:a', 'aac', '-b:a', '192k');
-      }
+      ffmpegArgs.push('-map', '[aout]');
+      ffmpegArgs.push('-c:a', 'aac', '-b:a', '192k');
 
       ffmpegArgs.push(
         '-c:v', 'libx264',
@@ -379,7 +485,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
           const str = data.toString();
           stderr += str;
 
-          // Parse progress from time=HH:MM:SS.xx
           const timeMatch = str.match(/time=(\d+):(\d+):(\d+\.\d+)/);
           if (timeMatch && onProgress && videoDuration > 0) {
             const currentSeconds =
@@ -392,7 +497,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
         });
 
         renderProc.on('close', (code) => {
-          // Clean up temp dir
           try {
             fs.rmSync(tempDir, { recursive: true, force: true });
           } catch (_) {}
@@ -413,3 +517,4 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     }
   }
 }
+

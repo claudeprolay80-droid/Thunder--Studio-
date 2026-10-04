@@ -51,13 +51,49 @@ export interface BlurBoxConfig {
   strength: number; // 1 - 50
 }
 
+export type SubtitleVerticalPosition = 'top' | 'upper' | 'center' | 'lower' | 'bottom';
+export type SubtitleHorizontalAlign = 'left' | 'center' | 'right';
+
 export interface SubtitleStyleConfig {
-  fontSize: number; // in pixels (e.g. 24)
+  fontSize: number; // 12 - 120px (default 36)
   textColor: string; // hex (e.g. #FFFFFF)
   bgColor: string; // hex (e.g. #000000)
   bgOpacity: number; // 0 - 1
-  bottomMarginPercent: number; // 0 - 30
+  horizontalAlign: SubtitleHorizontalAlign; // 'left' | 'center' | 'right'
+  verticalPosition: SubtitleVerticalPosition; // 'top' | 'upper' | 'center' | 'lower' | 'bottom'
+  yOffsetPercent: number; // 0 - 100 (fine-adjustment)
+  outline: boolean;
+  shadow: boolean;
+  bottomMarginPercent?: number; // legacy backwards compatibility
   fontFamily: string;
+}
+
+export type CropPreset = 'original' | '16:9' | '9:16' | '4:3' | '1:1' | 'custom';
+
+export interface CropConfig {
+  enabled: boolean;
+  xPercent: number; // 0 - 100
+  yPercent: number; // 0 - 100
+  widthPercent: number; // 0 - 100
+  heightPercent: number; // 0 - 100
+  preset: CropPreset;
+}
+
+export interface VideoTransformConfig {
+  mirror: boolean; // horizontal flip
+  crop: CropConfig;
+}
+
+export interface AudioSettings {
+  originalVolume: number; // 0.0 - 2.0 (0% - 200%, default 1.0)
+  voiceVolume: number;    // 0.0 - 2.0 (0% - 200%, default 1.0)
+  originalMuted: boolean; // default false
+}
+
+export interface EditorSettings {
+  audio: AudioSettings;
+  subtitle: SubtitleStyleConfig;
+  transform: VideoTransformConfig;
 }
 
 export interface VoiceSettingsConfig {

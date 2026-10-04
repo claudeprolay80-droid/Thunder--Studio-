@@ -30,6 +30,9 @@ import {
   SubtitleStyleEditor
 } from './components/SubtitleStyleEditor.tsx';
 import {
+  VideoEditorPanel
+} from './components/VideoEditorPanel.tsx';
+import {
   RenderExportModal
 } from './components/RenderExportModal.tsx';
 import {
@@ -47,7 +50,10 @@ import {
   SubtitleStyleConfig,
   VoiceSettingsConfig,
   PipelineStepId,
-  StepStatus
+  StepStatus,
+  AudioSettings,
+  VideoTransformConfig,
+  CropConfig
 } from './types/index.ts';
 import {
   Play,
@@ -60,7 +66,9 @@ import {
   Sliders,
   RotateCcw,
   CheckCircle2,
-  Video
+  Video,
+  Crop,
+  Volume2
 } from 'lucide-react';
 
 const INITIAL_STEPS: StepStatus[] = [
@@ -109,15 +117,41 @@ export default function App() {
     strength: 24
   });
 
-  // Subtitle style config
+  // Subtitle style config (default 36px, centered bottom with outline & shadow)
   const [subtitleStyle, setSubtitleStyle] = useState<SubtitleStyleConfig>({
-    fontSize: 26,
+    fontSize: 36,
     textColor: '#FFFFFF',
     bgColor: '#000000',
     bgOpacity: 0.75,
-    bottomMarginPercent: 8,
+    horizontalAlign: 'center',
+    verticalPosition: 'bottom',
+    yOffsetPercent: 8,
+    outline: true,
+    shadow: true,
     fontFamily: 'Noto Sans Myanmar'
   });
+
+  // Audio mix settings (independent Original Video vs Burmese Recap Voice)
+  const [audioSettings, setAudioSettings] = useState<AudioSettings>({
+    originalVolume: 1.0, // 100%
+    voiceVolume: 1.0,    // 100%
+    originalMuted: false
+  });
+
+  // Video transform settings (Crop & Mirror)
+  const [videoTransform, setVideoTransform] = useState<VideoTransformConfig>({
+    mirror: false,
+    crop: {
+      enabled: false,
+      xPercent: 0,
+      yPercent: 0,
+      widthPercent: 100,
+      heightPercent: 100,
+      preset: 'original'
+    }
+  });
+
+  const [isCropToolActive, setIsCropToolActive] = useState(false);
 
   // Burmese Edge TTS settings
   const [voiceSettings, setVoiceSettings] = useState<VoiceSettingsConfig>({
@@ -128,7 +162,7 @@ export default function App() {
   });
 
   // Player & UI Tab state
-  const [activeTab, setActiveTab] = useState<'recap' | 'transcript' | 'subtitles' | 'blur' | 'voice'>('recap');
+  const [activeTab, setActiveTab] = useState<'editor' | 'recap' | 'subtitles' | 'voice' | 'transcript'>('editor');
   const [currentTime, setCurrentTime] = useState(0);
   const [seekTime, setSeekTime] = useState<number | undefined>(undefined);
 
@@ -213,6 +247,40 @@ export default function App() {
     setErrorMessage('');
   };
 
+  // Reset All Editor Settings (Section 23)
+  const handleResetAllEditorSettings = () => {
+    setAudioSettings({
+      originalVolume: 1.0,
+      voiceVolume: 1.0,
+      originalMuted: false
+    });
+    setSubtitleStyle({
+      fontSize: 36,
+      textColor: '#FFFFFF',
+      bgColor: '#000000',
+      bgOpacity: 0.75,
+      horizontalAlign: 'center',
+      verticalPosition: 'bottom',
+      yOffsetPercent: 8,
+      outline: true,
+      shadow: true,
+      fontFamily: 'Noto Sans Myanmar'
+    });
+    setVideoTransform({
+      mirror: false,
+      crop: {
+        enabled: false,
+        xPercent: 0,
+        yPercent: 0,
+        widthPercent: 100,
+        heightPercent: 100,
+        preset: 'original'
+      }
+    });
+    setIsCropToolActive(false);
+    setStatusMessage('All video editor settings (volumes, subtitles, crop, mirror) restored to defaults.');
+  };
+
   // 3. Full Movie Recap Workflow Runner
   const handleStartRecap = async () => {
     if (!metadata) return;
@@ -277,11 +345,10 @@ export default function App() {
       // Subtitle Blur ready
       updateStepStatus('blur', 'completed');
 
-      setStatusMessage('Burmese movie recap generated! You can preview, adjust subtitles, and render the final MP4.');
-      setActiveTab('recap');
+      setStatusMessage('Burmese movie recap generated! You can preview, adjust audio/subtitles/crop in Video Editor, and render MP4.');
+      setActiveTab('editor');
     } catch (err: any) {
       setErrorMessage(err.message || 'Processing failed.');
-      // Mark current active step as error
       setPipelineSteps((prev) =>
         prev.map((s) => (s.status === 'in_progress' ? { ...s, status: 'error', error: err.message } : s))
       );
@@ -337,7 +404,6 @@ export default function App() {
 
   // Generate / Retry Voice for individual segment
   const handleRegenerateVoiceForSegment = async (segment: RecapSegment) => {
-    // Optimistic loading state
     setRecapSegments((prev) =>
       prev.map((s) => (s.id === segment.id ? { ...s, isGeneratingAudio: true } : s))
     );
@@ -397,7 +463,7 @@ export default function App() {
     }
   };
 
-  // Render Final Video with FFmpeg
+  // Render Final Video with FFmpeg (using crop, mirror, blur box, Burmese subtitles, and audio mixing)
   const handleRenderFinalVideo = async () => {
     if (!metadata) return;
 
@@ -416,6 +482,8 @@ export default function App() {
         subtitles: subtitleChunks,
         blurBox,
         subtitleStyle,
+        videoTransform,
+        audioSettings,
         videoDuration: metadata.durationSeconds,
         jobId
       });
@@ -490,6 +558,12 @@ export default function App() {
                 recapSegments={recapSegments}
                 blurBox={blurBox}
                 subtitleStyle={subtitleStyle}
+                audioSettings={audioSettings}
+                videoTransform={videoTransform}
+                onChangeCrop={(crop: CropConfig) => setVideoTransform({ ...videoTransform, crop })}
+                isCropToolActive={isCropToolActive}
+                videoWidth={metadata.width}
+                videoHeight={metadata.height}
                 onTimeUpdate={(t) => setCurrentTime(t)}
                 externalCurrentTime={seekTime}
               />
@@ -504,7 +578,7 @@ export default function App() {
                     </span>
                   </div>
                   <p className="text-xs text-zinc-400 mt-0.5">
-                    FFmpeg will burn the subtitle blur mask, Noto Sans Myanmar subtitles, and mix audio tracks.
+                    FFmpeg will apply video crop, mirror transform, blur mask, Burmese subtitles, and mix audio tracks.
                   </p>
                 </div>
 
@@ -523,10 +597,23 @@ export default function App() {
               <BlurBoxControls config={blurBox} onChange={setBlurBox} />
             </div>
 
-            {/* Right Column: AI Script & Voice Studio Tabs (5 cols on lg) */}
+            {/* Right Column: Video Editor Suite & Script Studio Tabs (5 cols on lg) */}
             <div className="lg:col-span-5 space-y-4">
               {/* Studio Tabs Navigation */}
               <div className="flex items-center space-x-1 bg-zinc-900 border border-zinc-800 p-1.5 rounded-2xl overflow-x-auto">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('editor')}
+                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition ${
+                    activeTab === 'editor'
+                      ? 'bg-amber-500 text-zinc-950 shadow font-bold'
+                      : 'text-zinc-400 hover:text-zinc-200'
+                  }`}
+                >
+                  <Sliders className="w-3.5 h-3.5" />
+                  <span>Video Editor</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => setActiveTab('recap')}
@@ -581,6 +668,22 @@ export default function App() {
               </div>
 
               {/* Tab Contents */}
+              {activeTab === 'editor' && (
+                <VideoEditorPanel
+                  audioSettings={audioSettings}
+                  onChangeAudio={setAudioSettings}
+                  subtitleStyle={subtitleStyle}
+                  onChangeSubtitleStyle={setSubtitleStyle}
+                  videoTransform={videoTransform}
+                  onChangeTransform={setVideoTransform}
+                  onResetAllSettings={handleResetAllEditorSettings}
+                  videoWidth={metadata.width}
+                  videoHeight={metadata.height}
+                  isCropToolActive={isCropToolActive}
+                  onToggleCropTool={() => setIsCropToolActive(!isCropToolActive)}
+                />
+              )}
+
               {activeTab === 'recap' && (
                 <RecapScriptViewer
                   segments={recapSegments}

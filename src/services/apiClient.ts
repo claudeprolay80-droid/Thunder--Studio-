@@ -194,6 +194,8 @@ export class ApiClient {
     subtitles,
     blurBox,
     subtitleStyle,
+    videoTransform,
+    audioSettings,
     videoDuration,
     jobId
   }: {
@@ -202,6 +204,8 @@ export class ApiClient {
     subtitles: SubtitleChunk[];
     blurBox: BlurBoxConfig;
     subtitleStyle: SubtitleStyleConfig;
+    videoTransform?: any;
+    audioSettings?: any;
     videoDuration: number;
     jobId: string;
   }): Promise<{ renderedUrl: string; outputFilename: string; sizeBytes: number }> {
@@ -214,6 +218,8 @@ export class ApiClient {
         subtitles,
         blurBox,
         subtitleStyle,
+        videoTransform,
+        audioSettings,
         videoDuration,
         jobId
       })
